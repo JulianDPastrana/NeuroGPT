@@ -100,6 +100,7 @@ def exclude_sz_subs(csv_file, lower_bound=2599, upper_bound=1000000, files_all=N
     return filtered_files        
 
 def cv_split_bci(filenames):
+    print(filenames)
     train_folds = []
     val_folds = []
     for i in range(9):
@@ -107,4 +108,7 @@ def cv_split_bci(filenames):
         validation_files = filenames[i*2 : i*2+2]
         train_folds.append(train_files)
         val_folds.append(validation_files)
+        print("--- Fold ", i, " ---")
+        print("Train files: ", train_files)
+        print("Validation files: ", validation_files)
     return train_folds, val_folds

@@ -15,10 +15,11 @@ import torch.distributed as dist
 
 from transformers.integrations import (  # isort: split
     hp_params,
+    deepspeed_init,
+    is_deepspeed_zero3_enabled,
 )
 from transformers import PretrainedConfig
 from transformers.data.data_collator import DataCollator, DataCollatorWithPadding, default_data_collator
-from transformers.deepspeed import deepspeed_init, is_deepspeed_zero3_enabled
 from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES, MODEL_MAPPING_NAMES
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 from transformers.trainer_callback import (
@@ -27,16 +28,8 @@ from transformers.trainer_callback import (
 from transformers.trainer_pt_utils import (
     IterableDatasetShard,
 )
-from transformers.trainer_utils import (
-    seed_worker
-)
 from transformers.training_args import OptimizerNames, ParallelMode, TrainingArguments
 from transformers.utils import (
-    is_sagemaker_mp_enabled,
-    is_torch_tensorrt_fx_available,
-    is_datasets_available,
-    is_torch_tpu_available,
-    is_torchdynamo_available,
     logging,
 )
 from transformers.utils.generic import ContextManagers
@@ -106,7 +99,6 @@ class Trainer(Trainer):
             drop_last=self.args.dataloader_drop_last,
             num_workers=self.args.dataloader_num_workers,
             pin_memory=True,
-            worker_init_fn=seed_worker,
         )
         return train_loader
 

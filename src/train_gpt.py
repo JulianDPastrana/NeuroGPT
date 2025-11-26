@@ -54,7 +54,7 @@ from trainer.make import make_trainer
 from trainer.base import Trainer
 from decoder.unembedder import make_unembedder
 
-os.environ["WANDB_DISABLED"] = "true"
+# os.environ["WANDB_DISABLED"] = "true"
 
 def train(config: Dict=None) -> Trainer:
     """Model training according to config.
