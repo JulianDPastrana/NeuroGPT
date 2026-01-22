@@ -1,38 +1,16 @@
 #!/usr/bin/env python3
 from typing import Dict, List, Optional, Tuple
 
-from collections.abc import Mapping
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 # from apex import amp
-from tqdm.auto import tqdm
 import torch
-from torch import nn
+from torch.utils.data import DataLoader, Dataset
 from transformers import Trainer
-from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
-from torch.utils.data.distributed import DistributedSampler
-import torch.distributed as dist
-
-from transformers.integrations import (  # isort: split
-    hp_params,
-    deepspeed_init,
-    is_deepspeed_zero3_enabled,
-)
-from transformers import PretrainedConfig
-from transformers.data.data_collator import DataCollator, DataCollatorWithPadding, default_data_collator
-from transformers.models.auto.modeling_auto import MODEL_FOR_CAUSAL_LM_MAPPING_NAMES, MODEL_MAPPING_NAMES
-from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-from transformers.trainer_callback import (
-    TrainerState,
-)
 from transformers.trainer_pt_utils import (
     IterableDatasetShard,
 )
-from transformers.training_args import OptimizerNames, ParallelMode, TrainingArguments
 from transformers.utils import (
     logging,
 )
-from transformers.utils.generic import ContextManagers
 
 logger = logging.get_logger(__name__)
 TRAINING_ARGS_NAME = "training_args.bin"
@@ -43,15 +21,12 @@ SCALER_NAME = "scaler.pt"
 
 
 class Trainer(Trainer):
-    def __init__(
-        self,
-        is_deepspeed: bool = False,
-        **kwargs
-        ) -> None:
+    def __init__(self, is_deepspeed: bool = False, **kwargs) -> None:
         super().__init__(**kwargs)
         self.name = "Trainer"
         self.is_deepspeed = is_deepspeed
-    
+        self._debug_pred_logged = False
+
     def get_train_dataloader(self) -> DataLoader:
         """
         Returns the training [`~torch.utils.data.DataLoader`].
@@ -194,6 +169,7 @@ class Trainer(Trainer):
             num_workers=self.args.dataloader_num_workers,
             pin_memory=self.args.dataloader_pin_memory,
         )
+
     # def _inner_training_loop(
     #     self, batch_size=None, args=None, resume_from_checkpoint=None, trial=None, ignore_keys_for_eval=None
     # ):
@@ -475,7 +451,7 @@ class Trainer(Trainer):
     #                 optimizer_was_run = True
     #                 if self.deepspeed:
     #                     pass  # called outside the loop
-                
+
     #                 elif self.do_grad_scaling:
     #                     scale_before = self.scaler.get_scale()
     #                     self.scaler.step(self.optimizer)
@@ -494,7 +470,7 @@ class Trainer(Trainer):
     #                 self.control = self.callback_handler.on_step_end(args, self.state, self.control)
     #                 print(self.state.epoch)
     #                 pdb.set_trace()
-                    
+
     #                 self._maybe_log_save_evaluate(tr_loss, model, trial, epoch, ignore_keys_for_eval)
     #             else:
     #                 self.control = self.callback_handler.on_substep_end(args, self.state, self.control)
@@ -562,7 +538,6 @@ class Trainer(Trainer):
     #     self.control = self.callback_handler.on_train_end(args, self.state, self.control)
 
     #     return TrainOutput(self.state.global_step, train_loss, metrics)
-        
 
     # def training_step(self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]]) -> torch.Tensor:
     #     """
@@ -616,61 +591,46 @@ class Trainer(Trainer):
         model,
         batch,
         prediction_loss_only: bool = False,
-        ignore_keys: Optional[List[str]] = None
-        ) -> Tuple[torch.tensor, torch.tensor, torch.tensor]:
+        ignore_keys: Optional[List[str]] = None,
+    ) -> Tuple[torch.tensor, torch.tensor, torch.tensor]:
         batch = self._move_batch_to_device(batch=batch)
-        
+
         with torch.no_grad():
             (loss, outputs) = self.compute_loss(
-                model=model,
-                batch=batch,
-                return_outputs=True
+                model=model, batch=batch, return_outputs=True
             )
 
-        if not prediction_loss_only and 'labels' in batch:
-            return (loss, outputs['decoding_logits'], batch['labels'])
-        
+        if not prediction_loss_only and "labels" in batch:
+            return (loss, outputs["decoding_logits"], batch["labels"])
+
         else:
             return (loss, outputs, None)
 
-    def compute_loss(
-        self,
-        model,
-        batch,
-        return_outputs=False,
-        **kwargs
-        ):
+    def compute_loss(self, model, batch, return_outputs=False, **kwargs):
         batch = self._move_batch_to_device(batch=batch)
 
-        if isinstance(
-            model,
-            (
-                torch.nn.DataParallel, 
-                torch.nn.parallel.DistributedDataParallel
+        if (
+            isinstance(
+                model,
+                (torch.nn.DataParallel, torch.nn.parallel.DistributedDataParallel),
             )
-        ) or self.is_deepspeed:
+            or self.is_deepspeed
+        ):
             (losses, outputs) = model.module.compute_loss(
-                batch=batch,
-                return_outputs=True
+                batch=batch, return_outputs=True
             )
-        
+
         else:
-            (losses, outputs) = model.compute_loss(
-                batch=batch,
-                return_outputs=True
-            )
-        
-        loss = losses['loss'] if 'loss' in losses.keys() else sum(losses.values())
-        
+            (losses, outputs) = model.compute_loss(batch=batch, return_outputs=True)
+
+        loss = losses["loss"] if "loss" in losses.keys() else sum(losses.values())
+
         return (loss, outputs) if return_outputs else loss
 
-    def _move_batch_to_device(
-        self,
-        batch
-        ) -> Dict[str, torch.tensor]:
+    def _move_batch_to_device(self, batch) -> Dict[str, torch.tensor]:
         batch = self._prepare_inputs(batch)
-        
+
         if "labels" in batch:
             batch["labels"] = batch["labels"].to(torch.long).to(batch["inputs"].device)
-        
+
         return self._prepare_inputs(batch)

@@ -92,33 +92,65 @@ def decoding_accuracy_metrics(eval_preds, num_decoding_classes: int = None):
     preds, labels = eval_preds
 
     # If num_decoding_classes is not provided, infer from prediction shape
-    # Treat 1D logits as binary by default to avoid argmax collapsing.
     if num_decoding_classes is None:
-        if preds.ndim == 1 or (preds.ndim > 1 and preds.shape[-1] == 1):
-            num_decoding_classes = 2
-        else:
-            num_decoding_classes = preds.shape[-1]
+        num_decoding_classes = preds.shape[-1] if len(preds.shape) > 1 else 1
 
-    # Binary classification: apply thresholding
-    if num_decoding_classes <= 2:
+    # DEBUG OUTPUT
+    import sys
+
+    print(f"\n{'=' * 80}", file=sys.stderr)
+    print("[METRICS COMPUTATION]", file=sys.stderr)
+    print(f"num_decoding_classes: {num_decoding_classes}", file=sys.stderr)
+    print(f"preds shape: {preds.shape}", file=sys.stderr)
+    print(
+        f"  min={preds.min():.6f}, max={preds.max():.6f}, mean={preds.mean():.6f}",
+        file=sys.stderr,
+    )
+    print(f"labels shape: {labels.shape}", file=sys.stderr)
+    print(f"  unique values: {np.unique(labels)}", file=sys.stderr)
+    print(
+        f"  distribution: {[(v, np.sum(labels == v)) for v in np.unique(labels)]}",
+        file=sys.stderr,
+    )
+    print(f"preds sample (first 10): {preds.flatten()[:10]}", file=sys.stderr)
+    print(f"labels sample (first 10): {labels[:10]}", file=sys.stderr)
+
+    # Binary classification: apply sigmoid + threshold
+    if num_decoding_classes == 2:
         # preds should be [batch, 1] from BCEWithLogitsLoss
         if len(preds.shape) > 1 and preds.shape[-1] == 1:
             preds = preds.squeeze(-1)
+        # Apply sigmoid and threshold at 0.5
+        sigmoid_vals = 1 / (1 + np.exp(-preds))
+        preds_binary = (sigmoid_vals > 0.5).astype(int)
 
-        # Detect if values look like probabilities already (0-1 range). If so, skip sigmoid.
-        preds_min, preds_max = preds.min(), preds.max()
-        is_prob_like = preds_min >= 0.0 and preds_max <= 1.0
-        if is_prob_like:
-            prob_vals = preds
-        else:
-            prob_vals = 1 / (1 + np.exp(-preds))
+        print("BINARY CLASSIFICATION:", file=sys.stderr)
+        print(f"  After squeeze shape: {preds.shape}", file=sys.stderr)
+        print(
+            f"  Sigmoid min={sigmoid_vals.min():.6f}, max={sigmoid_vals.max():.6f}, mean={sigmoid_vals.mean():.6f}",
+            file=sys.stderr,
+        )
+        print(f"  Sigmoid sample (first 10): {sigmoid_vals[:10]}", file=sys.stderr)
+        print(
+            f"  Binary preds distribution: class_0={np.sum(preds_binary == 0)}, class_1={np.sum(preds_binary == 1)}",
+            file=sys.stderr,
+        )
+        print(f"  Binary preds sample (first 10): {preds_binary[:10]}", file=sys.stderr)
 
-        preds = (prob_vals > 0.5).astype(int)
+        preds = preds_binary
     else:
         # Multi-class: use argmax
         preds = preds.argmax(axis=-1)
+        print("MULTI-CLASS: Using argmax", file=sys.stderr)
+        print(
+            f"  Preds distribution: {[(v, np.sum(preds == v)) for v in np.unique(preds)]}",
+            file=sys.stderr,
+        )
 
     accuracy = accuracy_score(labels, preds)
+    print(f"FINAL ACCURACY: {accuracy:.4f}", file=sys.stderr)
+    print(f"{'=' * 80}\n", file=sys.stderr)
+
     return {"accuracy": round(accuracy, 3)}
 
 

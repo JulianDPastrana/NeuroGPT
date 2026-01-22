@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 
-from typing import Dict
 import warnings
+from typing import Dict
+
 import torch
-from transformers import GPT2Config, GPT2Model
 import torch.nn as nn
+from transformers import GPT2Config, GPT2Model
+
 
 class GPTModel(torch.nn.Module):
     def __init__(
@@ -14,12 +16,12 @@ class GPTModel(torch.nn.Module):
         embed_dim: int = 768,
         intermediate_dim_factor: int = 4,
         n_positions: int = 512,
-        hidden_activation: str = 'gelu',
+        hidden_activation: str = "gelu",
         dropout: float = 0.1,
-        **kwargs
-        ) -> None:
+        **kwargs,
+    ) -> None:
         super().__init__()
-        self.name = 'GPT'
+        self.name = "GPT"
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
         self.embed_dim = embed_dim
@@ -30,7 +32,7 @@ class GPTModel(torch.nn.Module):
         self.dropout_attn = dropout
         self.dropout_embd = dropout
         self.mse_loss = torch.nn.MSELoss()
-        self.bxe_loss = torch.nn.BCEWithLogitsLoss() 
+        self.bxe_loss = torch.nn.BCEWithLogitsLoss()
         self.config = GPT2Config(
             vocab_size=1,
             n_positions=self.n_positions,
@@ -41,7 +43,7 @@ class GPTModel(torch.nn.Module):
             resid_pdrop=self.dropout_resid,
             attn_pdrop=self.dropout_attn,
             embd_pdrop=self.dropout_embd,
-            activation_function=self.hidden_activation
+            activation_function=self.hidden_activation,
         )
         self.transformer = GPT2Model(config=self.config)
         self.is_decoding_mode = False
@@ -51,10 +53,8 @@ class GPTModel(torch.nn.Module):
         self.add_pooler_layer()
 
     def switch_decoding_mode(
-        self,
-        is_decoding_mode: bool=False,
-        num_decoding_classes: int=None
-        ) -> None:
+        self, is_decoding_mode: bool = False, num_decoding_classes: int = None
+    ) -> None:
         self.is_decoding_mode = is_decoding_mode
         if self.is_decoding_mode:
             if self.pooler_layer is None:
@@ -65,40 +65,29 @@ class GPTModel(torch.nn.Module):
 
     def add_pooler_layer(self):
         if self.pooler_layer is not None:
-            warnings.warn(
-                    'Warning: overwriting existing pooler layer'
-                )
+            warnings.warn("Warning: overwriting existing pooler layer")
         self.pooler_layer = torch.nn.Sequential(
-            torch.nn.Linear(
-                in_features=self.embed_dim,
-                out_features=self.embed_dim
-            ),
+            torch.nn.Linear(in_features=self.embed_dim, out_features=self.embed_dim),
             torch.nn.Tanh(),
-            torch.nn.Dropout(self.dropout_resid)
+            torch.nn.Dropout(self.dropout_resid),
         )
 
-    def add_decoding_head(
-        self,
-        num_decoding_classes: int
-        ) -> None:
+    def add_decoding_head(self, num_decoding_classes: int) -> None:
         if self.decoding_head is not None:
             if self.num_decoding_classes == num_decoding_classes:
                 warnings.warn(
-                    'Warning: not overwriting decoding head, as '
-                    f'{num_decoding_classes}-class decoding head exists.'
+                    "Warning: not overwriting decoding head, as "
+                    f"{num_decoding_classes}-class decoding head exists."
                 )
                 return None
             else:
                 warnings.warn(
-                    f'Warning: overwriting existing {num_decoding_classes}-class decoding head.'
+                    f"Warning: overwriting existing {num_decoding_classes}-class decoding head."
                 )
         self.num_decoding_classes = num_decoding_classes
-        # self.decoding_head = torch.nn.Sequential(
-        #     torch.nn.Linear(
-        #         in_features=self.embed_dim,
-        #         out_features=self.num_decoding_classes
-        #     )
-        # )
+        # For binary classification, output single logit (for BCEWithLogitsLoss)
+        # For multi-class, output num_decoding_classes logits
+        output_dim = 1 if num_decoding_classes == 2 else num_decoding_classes
         self.decoding_head = nn.Sequential(
             nn.Linear(self.embed_dim, 256),
             nn.ELU(),
@@ -106,60 +95,56 @@ class GPTModel(torch.nn.Module):
             nn.Linear(256, 32),
             nn.ELU(),
             nn.Dropout(0.3),
-            nn.Linear(32, self.num_decoding_classes)
+            nn.Linear(32, output_dim),
         )
         return None
-    
+
     def decode(
         self,
         outputs: torch.tensor,
         attention_mask: torch.tensor,
-        ) -> Dict[str, torch.tensor]:
-        assert self.is_decoding_mode, 'GPTModel must be in decoding_mode.'
-        assert self.pooler_layer is not None, 'pooler_layer head must be added.'
-        assert self.decoding_head is not None, 'decoding head must be added.'
+    ) -> Dict[str, torch.tensor]:
+        assert self.is_decoding_mode, "GPTModel must be in decoding_mode."
+        assert self.pooler_layer is not None, "pooler_layer head must be added."
+        assert self.decoding_head is not None, "decoding head must be added."
         batch_size = outputs.size()[0]
-        sequence_lengths = attention_mask.sum(dim=1)-1
+        sequence_lengths = attention_mask.sum(dim=1) - 1
         decoding_outputs = {
-            'pooler_outputs': self.pooler_layer(
-                outputs[torch.arange(batch_size, device=outputs.device), sequence_lengths]
+            "pooler_outputs": self.pooler_layer(
+                outputs[
+                    torch.arange(batch_size, device=outputs.device), sequence_lengths
+                ]
             )
         }
-        decoding_outputs['decoding_logits'] = self.decoding_head(decoding_outputs['pooler_outputs'])
+        decoding_outputs["decoding_logits"] = self.decoding_head(
+            decoding_outputs["pooler_outputs"]
+        )
         return decoding_outputs
 
-    def forward(
-        self,
-        batch: Dict[str, torch.tensor]
-        ) -> Dict[str, torch.tensor]:
+    def forward(self, batch: Dict[str, torch.tensor]) -> Dict[str, torch.tensor]:
         transformer_outputs = self.transformer.forward(
-            inputs_embeds=batch['inputs_embeds'],
-            attention_mask=batch['attention_mask'],
-            token_type_ids=batch.get('token_type_ids', None),
-            return_dict=True
+            inputs_embeds=batch["inputs_embeds"],
+            attention_mask=batch["attention_mask"],
+            token_type_ids=batch.get("token_type_ids", None),
+            return_dict=True,
         )
-        outputs = {'outputs': transformer_outputs['last_hidden_state']}
+        outputs = {"outputs": transformer_outputs["last_hidden_state"]}
 
         if not self.is_decoding_mode:
             return outputs
 
         outputs.update(
             self.decode(
-                outputs=outputs['outputs'],
-                attention_mask=batch['attention_mask']
+                outputs=outputs["outputs"], attention_mask=batch["attention_mask"]
             )
         )
         return outputs
 
 
 class PretrainedGPT2(GPTModel):
-    
-    def __init__(
-        self,
-        **kwargs
-        ):
+    def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.name = 'PretrainedGPT2'
+        self.name = "PretrainedGPT2"
         self.config = GPT2Config()
         self.n_positions = self.config.n_positions
         self.embed_dim = self.config.n_embd
